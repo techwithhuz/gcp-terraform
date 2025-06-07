@@ -2,27 +2,45 @@ terraform {
   required_providers {
     google = {
       source  = "hashicorp/google"
-      version = "~> 4.0"
+      version = ">= 4.0"
     }
   }
-  required_version = ">= 1.0.0"
+  required_version = ">= 1.2.0"
 }
 
 provider "google" {
   project = var.project_id
-  region  = "us-central1"
-  zone    = "us-central1-a"
+  region  = var.region
+  zone    = var.zone
+}
+
+variable "project_id" {
+  description = "The GCP project ID"
+  type        = string
+}
+
+variable "region" {
+  description = "The GCP region"
+  type        = string
+  default     = "us-central1"
+}
+
+variable "zone" {
+  description = "The GCP zone"
+  type        = string
+  default     = "us-central1-a"
 }
 
 resource "google_project_service" "compute" {
-  service = "compute.googleapis.com"
-  disable_on_destroy = false
-  project = var.project_id
+  service  = "compute.googleapis.com"
+  project  = var.project_id
+  depends_on = []
 }
 
 resource "google_compute_network" "vpc_network" {
-  name = "custom-vpc-network"
+  name                    = "custom-vpc-network"
   auto_create_subnetworks = false
+  project                 = var.project_id
   labels = {
     creator = "gcp-terraform-agent"
   }
@@ -31,16 +49,17 @@ resource "google_compute_network" "vpc_network" {
 resource "google_compute_subnetwork" "subnet" {
   name          = "custom-subnet"
   ip_cidr_range = "10.0.0.0/24"
-  region        = "us-central1"
+  region        = var.region
   network       = google_compute_network.vpc_network.id
+  project       = var.project_id
   labels = {
     creator = "gcp-terraform-agent"
   }
 }
 
-resource "google_compute_firewall" "allow_ssh" {
+resource "google_compute_firewall" "default_ssh" {
   name    = "allow-ssh"
-  network = google_compute_network.vpc_network.name
+  network = google_compute_network.vpc_network.id
 
   allow {
     protocol = "tcp"
@@ -48,23 +67,21 @@ resource "google_compute_firewall" "allow_ssh" {
   }
 
   source_ranges = ["0.0.0.0/0"]
-  direction = "INGRESS"
-  target_tags = ["allow-ssh"]
+  direction     = "INGRESS"
+
+  project = var.project_id
+  target_tags = ["ssh-access"]
   labels = {
     creator = "gcp-terraform-agent"
   }
 }
 
 resource "google_compute_instance" "vm_instance" {
-  name         = "vm-instance"
+  name         = "e2-micro-instance"
   machine_type = "e2-micro"
-  zone         = "us-central1-a"
-
-  labels = {
-    creator = "gcp-terraform-agent"
-  }
-
-  tags = ["allow-ssh"]
+  zone         = var.zone
+  project      = var.project_id
+  tags         = ["ssh-access"]
 
   boot_disk {
     initialize_params {
@@ -77,15 +94,12 @@ resource "google_compute_instance" "vm_instance" {
     subnetwork = google_compute_subnetwork.subnet.id
 
     access_config {
-      // Ephemeral External IP
     }
   }
-  depends_on = [google_project_service.compute]
-}
 
-variable "project_id" {
-  description = "The project ID to deploy resources into"
-  type        = string
+  labels = {
+    creator = "gcp-terraform-agent"
+  }
 }
 
 output "instance_name" {
