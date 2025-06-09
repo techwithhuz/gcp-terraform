@@ -1,26 +1,13 @@
-terraform {
-  required_providers {
-    google = {
-      source  = "hashicorp/google"
-      version = ">= 4.0.0"
-    }
-  }
-  required_version = ">= 1.0"
-}
-
 provider "google" {
   project = var.project_id
-  region  = var.region
-}
-
-resource "google_project_service" "compute_api" {
-  service = "compute.googleapis.com"
-  disable_on_destroy = false
+  region  = "us-central1"
+  zone    = "us-central1-a"
 }
 
 resource "google_compute_network" "custom_vpc" {
   name                    = "custom-vpc"
   auto_create_subnetworks = false
+  description             = "Custom VPC created by terraform"
   labels = {
     creator = "gcp-terraform-agent"
   }
@@ -29,8 +16,8 @@ resource "google_compute_network" "custom_vpc" {
 resource "google_compute_subnetwork" "custom_subnet" {
   name          = "custom-subnet"
   ip_cidr_range = "10.0.0.0/24"
-  region        = var.region
   network       = google_compute_network.custom_vpc.id
+  region        = "us-central1"
   labels = {
     creator = "gcp-terraform-agent"
   }
@@ -39,27 +26,23 @@ resource "google_compute_subnetwork" "custom_subnet" {
 resource "google_compute_firewall" "allow_ssh" {
   name    = "allow-ssh"
   network = google_compute_network.custom_vpc.name
-
   allow {
     protocol = "tcp"
     ports    = ["22"]
   }
-
   source_ranges = ["0.0.0.0/0"]
-
-  target_tags = ["allow-ssh"]
-
-  description = "Allow SSH from anywhere"
-
+  direction     = "INGRESS"
+  target_tags   = ["allow-ssh"]
+  description   = "Allow SSH from anywhere"
   labels = {
     creator = "gcp-terraform-agent"
   }
 }
 
 resource "google_compute_instance" "vm_instance" {
-  name         = "vm-instance"
+  name         = "terraform-vm-instance"
   machine_type = "e2-micro"
-  zone         = var.zone
+  zone         = "us-central1-a"
 
   boot_disk {
     initialize_params {
@@ -69,9 +52,11 @@ resource "google_compute_instance" "vm_instance" {
 
   network_interface {
     network    = google_compute_network.custom_vpc.id
-    subnetwork = google_compute_subnetwork.custom_subnet.id
+    subnetwork = google_compute_subnetwork.custom_subnet.name
 
-    access_config {}
+    access_config {
+      # Ephemeral external IP
+    }
   }
 
   tags = ["allow-ssh"]
@@ -82,18 +67,6 @@ resource "google_compute_instance" "vm_instance" {
 }
 
 variable "project_id" {
-  description = "The project ID to deploy resources"
+  description = "The GCP project ID"
   type        = string
-}
-
-variable "region" {
-  description = "The region to host the VM"
-  type        = string
-  default     = "us-central1"
-}
-
-variable "zone" {
-  description = "The zone to host the VM"
-  type        = string
-  default     = "us-central1-a"
 }
