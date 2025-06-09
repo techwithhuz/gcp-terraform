@@ -2,7 +2,7 @@ terraform {
   required_providers {
     google = {
       source  = "hashicorp/google"
-      version = "~> 4.0"
+      version = ">= 4.0.0"
     }
   }
   required_version = ">= 1.0"
@@ -10,16 +10,15 @@ terraform {
 
 provider "google" {
   project = var.project_id
-  region  = "us-central1"
-  zone    = "us-central1-a"
+  region  = var.region
 }
 
-variable "project_id" {
-  description = "The GCP project ID"
-  type        = string
+resource "google_project_service" "compute_api" {
+  service = "compute.googleapis.com"
+  disable_on_destroy = false
 }
 
-resource "google_compute_network" "custom_network" {
+resource "google_compute_network" "custom_vpc" {
   name                    = "custom-vpc"
   auto_create_subnetworks = false
   labels = {
@@ -30,31 +29,37 @@ resource "google_compute_network" "custom_network" {
 resource "google_compute_subnetwork" "custom_subnet" {
   name          = "custom-subnet"
   ip_cidr_range = "10.0.0.0/24"
-  network       = google_compute_network.custom_network.id
-  region        = "us-central1"
+  region        = var.region
+  network       = google_compute_network.custom_vpc.id
   labels = {
     creator = "gcp-terraform-agent"
   }
 }
 
-resource "google_compute_firewall" "default_allow_ssh" {
+resource "google_compute_firewall" "allow_ssh" {
   name    = "allow-ssh"
-  network = google_compute_network.custom_network.name
+  network = google_compute_network.custom_vpc.name
+
   allow {
     protocol = "tcp"
     ports    = ["22"]
   }
+
   source_ranges = ["0.0.0.0/0"]
-  direction     = "INGRESS"
+
+  target_tags = ["allow-ssh"]
+
+  description = "Allow SSH from anywhere"
+
   labels = {
     creator = "gcp-terraform-agent"
   }
 }
 
 resource "google_compute_instance" "vm_instance" {
-  name         = "debian-vm"
+  name         = "vm-instance"
   machine_type = "e2-micro"
-  zone         = "us-central1-a"
+  zone         = var.zone
 
   boot_disk {
     initialize_params {
@@ -63,19 +68,32 @@ resource "google_compute_instance" "vm_instance" {
   }
 
   network_interface {
-    network    = google_compute_network.custom_network.id
+    network    = google_compute_network.custom_vpc.id
     subnetwork = google_compute_subnetwork.custom_subnet.id
 
     access_config {}
   }
+
+  tags = ["allow-ssh"]
 
   labels = {
     creator = "gcp-terraform-agent"
   }
 }
 
-resource "google_project_service" "compute_api" {
-  service = "compute.googleapis.com"
-  disable_on_destroy = false
-  depends_on = [google_compute_network.custom_network]
+variable "project_id" {
+  description = "The project ID to deploy resources"
+  type        = string
+}
+
+variable "region" {
+  description = "The region to host the VM"
+  type        = string
+  default     = "us-central1"
+}
+
+variable "zone" {
+  description = "The zone to host the VM"
+  type        = string
+  default     = "us-central1-a"
 }
